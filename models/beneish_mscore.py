@@ -4,16 +4,20 @@ beneish_mscore.py
 Calculates the Beneish M-Score for earnings manipulation detection.
 Translated directly from Shreshti's Excel framework.
 
-M-Score > -1.78  →  Likely Manipulator
-M-Score > -2.22  →  Grey Zone
-M-Score < -2.22  →  Unlikely Manipulator
+M-Score > -1.78  ->  Likely Manipulator
+M-Score > -2.22  ->  Grey Zone
+M-Score < -2.22  ->  Unlikely Manipulator
+
+Fix log:
+- DEPI: removed incorrect PPE proxy using total_assets - current_assets.
+  Now uses depreciation / (depreciation + capex) as PPE proxy.
+- LVGI: uses long_term_debt only per Beneish (1999) paper, not total liabilities.
+- NaN fallback changed to ratio-specific neutral values (not blanket 1.0).
 """
 
 import numpy as np
 import pandas as pd
 
-
-# ── Beneish weights (original 1999 paper) ─────────────────────────────────────
 WEIGHTS = {
     "intercept": -4.84,
     "DSRI":  0.920,
@@ -37,119 +41,115 @@ THRESHOLDS = {
     "LVGI":  1.111,
 }
 
+NEUTRAL = {
+    "DSRI": 1.0,
+    "GMI":  1.0,
+    "AQI":  1.0,
+    "SGI":  1.0,
+    "DEPI": 1.0,
+    "SGAI": 1.0,
+    "TATA": 0.0,
+    "LVGI": 1.0,
+}
+
 
 def _safe_div(a, b, fallback=np.nan):
-    """Division with zero/NaN protection."""
     try:
         if pd.isna(b) or b == 0:
             return fallback
-        return a / b
+        result = a / b
+        return fallback if np.isinf(result) else result
+    except Exception:
+        return fallback
+
+
+def _get(row, col, fallback=np.nan):
+    try:
+        val = row[col]
+        return val if not pd.isna(val) else fallback
     except Exception:
         return fallback
 
 
 def calculate_mscore(financials: pd.DataFrame, info: dict) -> dict:
-    """
-    Calculate Beneish M-Score using two consecutive years of financials.
-
-    Args:
-        financials: cleaned DataFrame from preprocessor (rows = years, most recent first)
-        info:       company info dict
-
-    Returns:
-        dict with all 8 ratios, final M-Score, verdict, and flagged ratios
-    """
     df = financials
 
     if len(df) < 2:
         raise ValueError("Beneish M-Score requires at least 2 years of data.")
 
-    # Most recent = current year (t), next row = prior year (t-1)
-    curr = df.iloc[0]   # FY2024
-    prev = df.iloc[1]   # FY2023
+    curr = df.iloc[0]
+    prev = df.iloc[1]
 
-    ticker = info.get("ticker", "N/A")
+    ticker    = info.get("ticker", "N/A")
     curr_year = str(df.index[0])[:4]
     prev_year = str(df.index[1])[:4]
 
-    # ── 1. DSRI — Days Sales Receivable Index ─────────────────────────────────
-    # Measures: Are receivables growing faster than sales?
-    dsri_curr = _safe_div(curr["accounts_rec"], curr["revenue"])
-    dsri_prev = _safe_div(prev["accounts_rec"], prev["revenue"])
-    DSRI = _safe_div(dsri_curr, dsri_prev)
+    # 1. DSRI
+    dsri_curr = _safe_div(_get(curr, "accounts_rec"), _get(curr, "revenue"))
+    dsri_prev = _safe_div(_get(prev, "accounts_rec"), _get(prev, "revenue"))
+    DSRI      = _safe_div(dsri_curr, dsri_prev)
 
-    # ── 2. GMI — Gross Margin Index ───────────────────────────────────────────
-    # Measures: Is gross margin deteriorating?
-    gm_curr = _safe_div(curr["gross_profit"], curr["revenue"])
-    gm_prev = _safe_div(prev["gross_profit"], prev["revenue"])
-    GMI = _safe_div(gm_prev, gm_curr)          # Note: prior / current (inverse)
+    # 2. GMI — inverse (prior / current)
+    gm_curr = _safe_div(_get(curr, "gross_profit"), _get(curr, "revenue"))
+    gm_prev = _safe_div(_get(prev, "gross_profit"), _get(prev, "revenue"))
+    GMI     = _safe_div(gm_prev, gm_curr)
 
-    # ── 3. AQI — Asset Quality Index ──────────────────────────────────────────
-    # Measures: Are non-productive (soft) assets growing?
-    # Non-current non-physical assets = Total Assets - Current Assets - PPE proxy
-    def asset_quality_ratio(row):
-        ppe_proxy = row["total_assets"] - row["current_assets"]
-        numerator = row["total_assets"] - row["current_assets"] - ppe_proxy
-        return _safe_div(numerator, row["total_assets"])
+    # 3. AQI — intangibles / total assets proxy
+    def _aq(row):
+        ta    = _get(row, "total_assets")
+        intan = _get(row, "intangibles", 0)
+        if pd.isna(ta) or ta == 0:
+            return np.nan
+        return intan / ta
 
-    aq_curr = _safe_div(
-        curr["intangibles"] if not pd.isna(curr["intangibles"]) else 0,
-        curr["total_assets"]
-    )
-    aq_prev = _safe_div(
-        prev["intangibles"] if not pd.isna(prev["intangibles"]) else 0,
-        prev["total_assets"]
-    )
-    AQI = _safe_div(aq_curr, aq_prev) if aq_prev != 0 else 1.0
+    aq_curr = _aq(curr)
+    aq_prev = _aq(prev)
+    AQI = 1.0 if (pd.isna(aq_prev) or aq_prev == 0) else _safe_div(aq_curr, aq_prev, 1.0)
 
-    # ── 4. SGI — Sales Growth Index ───────────────────────────────────────────
-    # Measures: Is revenue growth very high (pressure to sustain)?
-    SGI = _safe_div(curr["revenue"], prev["revenue"])
+    # 4. SGI
+    SGI = _safe_div(_get(curr, "revenue"), _get(prev, "revenue"))
 
-    # ── 5. DEPI — Depreciation Index ──────────────────────────────────────────
-    # Measures: Is the company slowing depreciation to inflate assets?
-    def depr_rate(row):
-        ppe = row["total_assets"] - row["current_assets"]
-        return _safe_div(row["depreciation"], row["depreciation"] + ppe)
+    # 5. DEPI — inverse (prior / current)
+    # Uses dep / (dep + capex) as PPE proxy — avoids the massive
+    # total_assets - current_assets number that inflated DEPI before.
+    def _depr_rate(row):
+        dep   = _get(row, "depreciation")
+        capex = _get(row, "capex", 0)
+        if pd.isna(dep) or dep == 0:
+            return np.nan
+        denominator = dep + abs(capex)
+        return _safe_div(dep, denominator)
 
-    depr_curr = depr_rate(curr)
-    depr_prev = depr_rate(prev)
-    DEPI = _safe_div(depr_prev, depr_curr)     # prior / current
+    DEPI = _safe_div(_depr_rate(prev), _depr_rate(curr))
 
-    # ── 6. SGAI — SGA Expense Index ───────────────────────────────────────────
-    # Measures: Are overheads growing faster than revenue?
-    sgai_curr = _safe_div(curr["sga"], curr["revenue"])
-    sgai_prev = _safe_div(prev["sga"], prev["revenue"])
-    SGAI = _safe_div(sgai_curr, sgai_prev)
+    # 6. SGAI
+    sgai_curr = _safe_div(_get(curr, "sga"), _get(curr, "revenue"))
+    sgai_prev = _safe_div(_get(prev, "sga"), _get(prev, "revenue"))
+    SGAI      = _safe_div(sgai_curr, sgai_prev)
 
-    # ── 7. LVGI — Leverage Index ──────────────────────────────────────────────
-    # Measures: Is debt rising relative to assets?
-    lev_curr = _safe_div(
-        curr["long_term_debt"] + curr["current_liab"], curr["total_assets"]
-    )
-    lev_prev = _safe_div(
-        prev["long_term_debt"] + prev["current_liab"], prev["total_assets"]
-    )
-    LVGI = _safe_div(lev_curr, lev_prev)
+    # 7. LVGI — long-term debt / total assets only (per original paper)
+    lev_curr = _safe_div(_get(curr, "long_term_debt"), _get(curr, "total_assets"))
+    lev_prev = _safe_div(_get(prev, "long_term_debt"), _get(prev, "total_assets"))
+    LVGI     = _safe_div(lev_curr, lev_prev)
 
-    # ── 8. TATA — Total Accruals to Total Assets ──────────────────────────────
-    # Measures: Are earnings backed by real cash?
+    # 8. TATA
     TATA = _safe_div(
-        curr["net_income"] - curr["operating_cf"],
-        curr["total_assets"]
+        _get(curr, "net_income") - _get(curr, "operating_cf"),
+        _get(curr, "total_assets")
     )
 
-    # ── Final M-Score ──────────────────────────────────────────────────────────
     ratios = {
         "DSRI": DSRI, "GMI": GMI, "AQI": AQI, "SGI": SGI,
         "DEPI": DEPI, "SGAI": SGAI, "TATA": TATA, "LVGI": LVGI,
     }
 
-    # Handle NaN ratios — replace with neutral value 1.0 to avoid breaking score
-    ratios_clean = {k: (v if not pd.isna(v) else 1.0) for k, v in ratios.items()}
+    ratios_clean = {
+        k: (v if (not pd.isna(v) and not np.isinf(v)) else NEUTRAL[k])
+        for k, v in ratios.items()
+    }
 
     m_score = (
-        WEIGHTS["intercept"]
+          WEIGHTS["intercept"]
         + WEIGHTS["DSRI"]  * ratios_clean["DSRI"]
         + WEIGHTS["GMI"]   * ratios_clean["GMI"]
         + WEIGHTS["AQI"]   * ratios_clean["AQI"]
@@ -160,7 +160,6 @@ def calculate_mscore(financials: pd.DataFrame, info: dict) -> dict:
         + WEIGHTS["LVGI"]  * ratios_clean["LVGI"]
     )
 
-    # ── Verdict ────────────────────────────────────────────────────────────────
     if m_score > -1.78:
         verdict = "LIKELY MANIPULATOR"
         risk    = "HIGH"
@@ -171,23 +170,21 @@ def calculate_mscore(financials: pd.DataFrame, info: dict) -> dict:
         verdict = "UNLIKELY MANIPULATOR"
         risk    = "LOW"
 
-    # ── Flag individual ratios ─────────────────────────────────────────────────
-    flagged = []
-    for ratio_name, value in ratios.items():
-        threshold = THRESHOLDS[ratio_name]
-        if not pd.isna(value) and value > threshold:
-            flagged.append(ratio_name)
+    flagged = [
+        name for name, value in ratios.items()
+        if not pd.isna(value) and not np.isinf(value) and value > THRESHOLDS[name]
+    ]
 
     result = {
-        "ticker":       ticker,
-        "curr_year":    curr_year,
-        "prev_year":    prev_year,
-        "ratios":       ratios,
-        "m_score":      round(m_score, 4),
-        "verdict":      verdict,
-        "risk":         risk,
+        "ticker":         ticker,
+        "curr_year":      curr_year,
+        "prev_year":      prev_year,
+        "ratios":         ratios,
+        "m_score":        round(m_score, 4),
+        "verdict":        verdict,
+        "risk":           risk,
         "flagged_ratios": flagged,
-        "thresholds":   THRESHOLDS,
+        "thresholds":     THRESHOLDS,
     }
 
     _print_results(result)
@@ -195,17 +192,17 @@ def calculate_mscore(financials: pd.DataFrame, info: dict) -> dict:
 
 
 def _print_results(r: dict):
-    print(f"\n{'='*55}")
+    print(f"\n{'='*58}")
     print(f"  BENEISH M-SCORE  |  {r['ticker']}  |  {r['curr_year']} vs {r['prev_year']}")
-    print(f"{'='*55}")
+    print(f"{'='*58}")
     for name, val in r["ratios"].items():
         threshold = r["thresholds"][name]
-        flag = "🔴" if (not pd.isna(val) and val > threshold) else "✅"
-        val_str = f"{val:.4f}" if not pd.isna(val) else "  N/A"
+        flag      = "🔴" if (not pd.isna(val) and val > threshold) else "✅"
+        val_str   = f"{val:.4f}" if (val == val and not np.isinf(val)) else "  N/A"
         print(f"  {flag}  {name:<6}  {val_str:>8}   (threshold: >{threshold})")
-    print(f"{'─'*55}")
-    print(f"  M-Score:   {r['m_score']:>8.4f}")
-    print(f"  Verdict:   {r['verdict']}")
+    print(f"{'─'*58}")
+    print(f"  M-Score :  {r['m_score']:>8.4f}")
+    print(f"  Verdict :  {r['verdict']}")
     if r["flagged_ratios"]:
-        print(f"  Flagged:   {', '.join(r['flagged_ratios'])}")
-    print(f"{'='*55}\n")
+        print(f"  Flagged :  {', '.join(r['flagged_ratios'])}")
+    print(f"{'='*58}\n")
