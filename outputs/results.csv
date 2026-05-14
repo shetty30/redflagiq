@@ -1,0 +1,2 @@
+ticker,company_name,sector,analysis_year,prior_year,m_score,m_score_verdict,m_score_risk,m_flagged_ratios,z_score,z_score_zone,z_score_risk,custom_flags_triggered,custom_flags_total,custom_flags_severity,flag_1_revenue_ocf,flag_2_ar_revenue,flag_3_gross_margin,flag_4_debt_equity,flag_5_ni_fcf,overall_risk,pdf_report,run_timestamp
+AAPL,Apple Inc.,Technology,2025,2024,2.4265,LIKELY MANIPULATOR,HIGH,DSRI,11.4909,SAFE ZONE,LOW,1,5,LOW,OK,FLAG,OK,OK,OK,HIGH,F:\Shriya\PROJECTS\redflagiq\src\..\outputs\reports\AAPL_RedFlagIQ_Report_20260514.pdf,2026-05-14 17:38:36
