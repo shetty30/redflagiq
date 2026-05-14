@@ -82,12 +82,20 @@ def run_pipeline(ticker: str, use_cache: bool = False) -> dict:
     pdf_path = generate_report(mscore_result, zscore_result, redflags_result, info)
 
     # ── Step 4: Build results row for CSV ─────────────────────────────────────
-    risks = [mscore_result["risk"], zscore_result["risk"], redflags_result["severity"]]
-    if "HIGH" in risks:
+    # NOTE: Beneish M-Score was calibrated on 1990s manufacturing firms.
+    # Modern large-cap tech companies structurally score > -1.78 due to
+    # high receivables and leverage. We require corroboration across
+    # models before rating HIGH.
+    m_high  = mscore_result["risk"]            == "HIGH"
+    z_high  = zscore_result["risk"]            == "HIGH"
+    z_med   = "GREY" in zscore_result["zone"]
+    f_count = redflags_result["triggered_count"]
+
+    if z_high:
         overall_risk = "HIGH"
-    elif risks.count("MEDIUM") >= 2:
-        overall_risk = "MEDIUM"
-    elif "MEDIUM" in risks:
+    elif m_high and (z_high or f_count >= 3):
+        overall_risk = "HIGH"
+    elif m_high or z_med or f_count >= 2:
         overall_risk = "MEDIUM"
     else:
         overall_risk = "LOW"
