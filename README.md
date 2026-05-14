@@ -6,6 +6,8 @@
 ![Status](https://img.shields.io/badge/Status-In%20Development-orange?style=flat-square)
 ![Domain](https://img.shields.io/badge/Domain-FinTech%20%7C%20Finance-1F4E79?style=flat-square)
 ![Type](https://img.shields.io/badge/Type-Portfolio%20Project-green?style=flat-square)
+![Models](https://img.shields.io/badge/Models-Beneish%20%7C%20Altman%20%7C%20Custom-2E75B6?style=flat-square)
+![Tested On](https://img.shields.io/badge/Tested%20On-AAPL-black?style=flat-square&logo=apple)
 
 ---
 
@@ -26,19 +28,36 @@ Run it across 50 companies in under 10 minutes.
 ### Beneish M-Score (Earnings Manipulation)
 Detects likelihood of financial statement manipulation using 8 financial ratios. A score above **-1.78** signals potential manipulation.
 
-| Index | Ratio | Red Flag Threshold |
-|-------|-------|--------------------|
-| DSRI | Days Sales Receivable Index | > 1.031 |
-| GMI | Gross Margin Index | > 1.014 |
-| AQI | Asset Quality Index | > 1.040 |
-| SGI | Sales Growth Index | > 1.134 |
-| DEPI | Depreciation Index | > 1.001 |
-| SGAI | SGA Expense Index | > 1.054 |
-| LVGI | Leverage Index | > 1.111 |
-| TATA | Total Accruals to Total Assets | > 0.018 |
+| Index | Ratio | What It Checks | Red Flag Threshold |
+|-------|-------|----------------|--------------------|
+| DSRI | Days Sales Receivable Index | Receivables growing faster than sales? | > 1.031 |
+| GMI | Gross Margin Index | Gross margin deteriorating? | > 1.014 |
+| AQI | Asset Quality Index | Non-productive assets growing? | > 1.040 |
+| SGI | Sales Growth Index | Growth so high it creates manipulation pressure? | > 1.134 |
+| DEPI | Depreciation Index | Depreciation being slowed to inflate assets? | > 1.001 |
+| SGAI | SGA Expense Index | Overheads growing faster than revenue? | > 1.054 |
+| LVGI | Leverage Index | Debt rising relative to assets? | > 1.111 |
+| TATA | Total Accruals to Total Assets | Earnings backed by real cash? | > 0.018 |
+
+**M-Score Interpretation:**
+- `> -1.78` → 🔴 Likely Manipulator
+- `-2.22 to -1.78` → 🟡 Grey Zone — Monitor
+- `< -2.22` → 🟢 Unlikely Manipulator
+
+---
 
 ### Altman Z-Score (Bankruptcy Risk)
 Predicts financial distress using 5 weighted ratios.
+
+| Factor | Ratio | Weight |
+|--------|-------|--------|
+| X1 | Working Capital / Total Assets | 1.2 |
+| X2 | Retained Earnings / Total Assets | 1.4 |
+| X3 | EBIT / Total Assets | 3.3 |
+| X4 | Market Cap / Total Liabilities | 0.6 |
+| X5 | Revenue / Total Assets | 1.0 |
+
+**Z-Score Zones:**
 
 | Z-Score | Zone | Signal |
 |---------|------|--------|
@@ -46,11 +65,14 @@ Predicts financial distress using 5 weighted ratios.
 | 1.81 – 2.99 | 🟡 Grey | Monitor closely |
 | < 1.81 | 🔴 Distress | High bankruptcy risk |
 
+---
+
 ### Custom Red Flag Layer
-Additional heuristics on top of the formal models:
+Analyst heuristics on top of the formal models — translated from the finance team's Excel framework:
+
 - Revenue growing but Operating Cash Flow flat or declining
 - Accounts Receivable growing 2x faster than Revenue
-- Gross Margin declining > 3% YoY for 2 consecutive years
+- Gross Margin declining year-over-year
 - Debt-to-Equity spike > 40% in a single year
 - Net Income positive but Free Cash Flow negative
 
@@ -62,34 +84,35 @@ Additional heuristics on top of the formal models:
 redflagiq/
 │
 ├── data/
-│   ├── raw/                  # Raw API response files
-│   └── processed/            # Cleaned, structured financials
+│   ├── raw/                  # Raw API response files (auto-generated)
+│   └── processed/            # Cleaned, structured financials (auto-generated)
 │
 ├── models/
-│   ├── beneish_mscore.py     # Beneish M-Score logic
-│   ├── altman_zscore.py      # Altman Z-Score logic
-│   └── ratio_analysis.py     # Supporting financial ratios
+│   ├── beneish_mscore.py     # Beneish M-Score — all 8 ratios + weighted formula
+│   ├── altman_zscore.py      # Altman Z-Score — all 5 factors + zone classification
+│   └── ratio_analysis.py     # Custom red flag heuristics — 5 analyst checks
 │
 ├── notebooks/
-│   └── analysis.ipynb        # Exploratory analysis
+│   └── analysis.ipynb        # Step-by-step AAPL exploratory analysis (33 cells)
 │
 ├── excel/
-│   └── framework.xlsx        # Finance lead's Excel model (source of truth)
+│   └── framework.xlsx        # Finance lead's Excel model — source of truth for all logic
 │
 ├── powerbi/
-│   └── dashboard.pbix        # PowerBI dashboard
+│   └── dashboard.pbix        # PowerBI dashboard — connects to outputs/results.csv
 │
 ├── src/
-│   ├── data_fetch.py         # Pulls data from APIs
-│   ├── preprocessor.py       # Cleans and structures data
-│   └── report_generator.py   # Auto-generates red flag reports
+│   ├── data_fetch.py         # Fetches financials via yfinance — single + batch mode
+│   ├── preprocessor.py       # Cleans raw data, standardises line items
+│   └── report_generator.py   # Auto-generates per-company PDF reports
 │
 ├── outputs/
-│   └── reports/              # Generated company reports
+│   ├── reports/              # Generated PDF reports per company
+│   └── results.csv           # Structured output — feeds PowerBI dashboard directly
 │
 ├── requirements.txt
 ├── README.md
-└── main.py                   # Entry point
+└── main.py                   # Entry point — full pipeline in one command
 ```
 
 ---
@@ -113,15 +136,7 @@ cd redflagiq
 pip install -r requirements.txt
 ```
 
-### 3. (Optional) Set up FMP API key
-
-If using Financial Modeling Prep API for additional data:
-
-```bash
-export FMP_API_KEY=your_api_key_here
-```
-
-> The project uses `yfinance` by default — no API key needed. FMP is an optional upgrade for richer data.
+> **requirements.txt includes:** `yfinance`, `pandas`, `numpy`, `fpdf2`, `openpyxl`
 
 ---
 
@@ -139,7 +154,7 @@ python main.py --ticker AAPL
 python main.py --batch tickers.csv
 ```
 
-Where `tickers.csv` is a single-column CSV with stock tickers:
+Where `tickers.csv` is a single-column CSV with one ticker per row:
 
 ```
 AAPL
@@ -148,39 +163,73 @@ TSLA
 AMZN
 ```
 
-### Output
+### Use cached data (skip re-fetching)
 
-Each run generates:
-- A **CSV** in `outputs/` with scores and flags for all companies
-- A **PDF report** per company in `outputs/reports/`
+```bash
+python main.py --ticker AAPL --no-fetch
+```
 
-The CSV auto-connects to the **PowerBI dashboard** when placed in the correct path.
+### Exploratory analysis (notebook)
+
+```bash
+cd notebooks
+jupyter notebook analysis.ipynb
+```
 
 ---
 
-## 📊 Output Example
+## 📊 What Gets Generated
+
+### Per-company PDF Report
+Auto-generated in `outputs/reports/` containing:
+- Company info and analysis period
+- Beneish M-Score with all 8 ratio values and flags
+- Altman Z-Score with all 5 weighted factors
+- Custom red flag checklist with details
+- Overall Risk Rating — LOW / MEDIUM / HIGH
+
+### Structured CSV (for PowerBI)
+Saved to `outputs/results.csv` — Shreshti's PowerBI dashboard connects to this file directly.
+
+| Column | Description |
+|--------|-------------|
+| `ticker` | Stock ticker |
+| `m_score` | Beneish M-Score value |
+| `m_score_verdict` | Likely Manipulator / Grey Zone / Unlikely |
+| `z_score` | Altman Z-Score value |
+| `z_score_zone` | Safe / Grey / Distress |
+| `custom_flags_triggered` | Number of custom flags triggered (0–5) |
+| `overall_risk` | LOW / MEDIUM / HIGH |
+
+### Terminal Output Example
 
 ```
-Ticker  | M-Score | Z-Score | Custom Flags | Risk Rating
---------|---------|---------|--------------|-------------
-AAPL    | -2.51   | 4.12    | 0            | LOW
-XYZ     | -1.45   | 1.62    | 4            | HIGH
-ABC     | -1.90   | 2.10    | 2            | MEDIUM
+══════════════════════════════════════════════════════════════════════
+  REDFLAGIQ BATCH SUMMARY
+══════════════════════════════════════════════════════════════════════
+  TICKER   COMPANY                   M-SCORE  Z-SCORE  FLAGS  RISK
+  ──────────────────────────────────────────────────────────────────
+  AAPL     Apple Inc.                  -2.89     8.85      1  🟢 LOW
+  XYZ      XYZ Corp                    -1.45     1.62      4  🔴 HIGH
+  ABC      ABC Holdings                -1.90     2.10      2  🟡 MEDIUM
+══════════════════════════════════════════════════════════════════════
 ```
 
 ---
 
 ## 🧩 Tech Stack
 
-| Layer | Tool |
-|-------|------|
-| Data Ingestion | `yfinance` / Financial Modeling Prep API |
-| Data Processing | Python, Pandas, NumPy |
-| Scoring Models | Python (translated from Excel framework) |
-| Report Generation | `fpdf2` |
-| Dashboard | Microsoft PowerBI |
-| Financial Model | Microsoft Excel |
-| Version Control | GitHub |
+| Layer | Tool | Purpose |
+|-------|------|---------|
+| Data Ingestion | `yfinance` | Pull 5 years of financial statements |
+| Data Processing | `pandas`, `numpy` | Clean, standardise, structure raw data |
+| Scoring Models | Python | Beneish M-Score, Altman Z-Score, custom flags |
+| Report Generation | `fpdf2` | Auto-generate per-company PDF reports |
+| CSV Export | `pandas` | Feed structured results to PowerBI |
+| Dashboard | Microsoft PowerBI | Visualise scores across companies |
+| Financial Model | Microsoft Excel | Logic framework — source of truth |
+| Notebook | Jupyter | Step-by-step exploratory analysis |
+| Version Control | GitHub | Collaboration and code management |
 
 ---
 
@@ -188,39 +237,46 @@ ABC     | -1.90   | 2.10    | 2            | MEDIUM
 
 | Name | Role | Contribution |
 |------|------|--------------|
-| Shresti Shukla | Finance Lead | Financial framework, Beneish/Altman model design, Excel model, PowerBI dashboard |
-| Shriya Shetty | Finance & Tech Lead | Data pipeline, model automation, report generation, GitHub |
+| Shreshti Shukla | Finance Lead | Beneish/Altman research, Excel model framework, custom red flag logic, PowerBI dashboard |
+| Shriya Shetty | Finance & Tech Lead | Data pipeline, model automation, PDF report generator, notebook, GitHub |
 
 ---
 
 ## 🌿 Branching Strategy
 
 ```
-main                      ← Production-ready code only
-├── dev                   ← Integration branch (merge here first)
-├── feature/data-pipeline ← Tech lead
-├── feature/scoring-models← Tech lead
-└── finance/excel-framework ← Finance lead (Excel + PowerBI uploads)
+main                        ← Production-ready code only. No direct pushes.
+├── dev                     ← Integration branch. Merge here first.
+├── feature/data-pipeline   ← Tech lead
+├── feature/scoring-models  ← Tech lead
+└── finance/excel-framework ← Finance lead (Excel + PowerBI file uploads only)
 ```
 
 **Rules:**
 - Never push directly to `main`
-- All PRs go into `dev` first, merged to `main` after testing
+- All PRs merge into `dev` first, then `dev` → `main` after testing
 - Finance lead uploads files via GitHub web interface — no terminal needed
+- `excel/framework.xlsx` is never edited directly by the tech lead
 
 ---
 
 ## 📅 Roadmap
 
-- [x] Project scoped and PRD written
-- [ ] Data pipeline — pull financials via API
-- [ ] Beneish M-Score automated
-- [ ] Altman Z-Score automated
-- [ ] Custom red flag layer
-- [ ] PDF report generator
-- [ ] PowerBI dashboard (Finance Lead)
-- [ ] Batch processing (50 companies)
-- [ ] README finalised
+- [x] Project scoped — PRD written
+- [x] README documented
+- [x] Folder structure set up
+- [x] `data_fetch.py` — yfinance pipeline with retry + batch mode
+- [x] `preprocessor.py` — data cleaning and standardisation
+- [x] `beneish_mscore.py` — all 8 ratios automated
+- [x] `altman_zscore.py` — all 5 factors automated
+- [x] `ratio_analysis.py` — 5 custom red flag checks
+- [x] `report_generator.py` — PDF report auto-generation
+- [x] `main.py` — full pipeline entry point
+- [x] `analysis.ipynb` — AAPL exploratory notebook (33 cells)
+- [x] Excel model — pre-filled AAPL framework (Shreshti)
+- [ ] PowerBI dashboard (Shreshti — in progress)
+- [ ] Batch test across 50 companies
+- [ ] Validation — Python output vs Excel output cross-check
 
 ---
 
@@ -232,8 +288,8 @@ This project is built for **educational and portfolio purposes only**. Nothing i
 
 ## 📄 License
 
-This project is not licensed for commercial use. For academic and portfolio use only.
+Not licensed for commercial use. For academic and portfolio use only.
 
 ---
 
-*Built as a collaborative Finance + Technology portfolio project.*
+*Built by Shriya Shetty & Shreshti Shukla | RedFlagIQ — Finance + Technology Portfolio Project*
