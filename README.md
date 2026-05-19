@@ -208,6 +208,8 @@ main                          ← Production. No direct pushes.
 - [x] Streamlit dashboard — 5 pages, deployed on Streamlit Cloud
 - [x] Batch tested — 10 S&P listed companies
 
+
+https://github.com/user-attachments/assets/4b198599-41bb-4f8f-940c-25ecbeb890cf
 ---
 
 
